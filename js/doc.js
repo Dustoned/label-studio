@@ -936,6 +936,20 @@ function makeStore(persist = true) {
 			s.changed();
 			return f;
 		},
+		// De prullenbak verwijdert ook de gekoppelde tekst/code/keuzegroep; opheffen blijft een aparte actie.
+		deleteField(key) {
+			const i = s.doc.fields.findIndex(f => f.key === key);
+			if (i < 0) return false;
+			const linked = el => [el.text, el.data].some(v => [...String(v ?? '').matchAll(/\{([^{}|]+)(?:\|[^{}]*)?\}/g)]
+				.some(m => m[1].trim().toLowerCase() === key)) || el.rules.some(r => r.field === key);
+			const targets = new Set(s.doc.elements.filter(linked));
+			if ([...targets].some(el => el.locked)) return false;
+			s.doc.elements = s.doc.elements.filter(el => !targets.has(el));
+			s.doc.fields.splice(i, 1);
+			prune();
+			s.changed();
+			return true;
+		},
 		// Veld weg: tokens worden de huidige waarde en regels op dit veld worden vastgezet zoals ze nu uitpakken.
 		removeField(key, row = null) {
 			const F = s.doc.fields, i = F.findIndex(f => f.key === key);
@@ -1617,6 +1631,18 @@ export async function selftest() {
 
 	// --- store: setField / makeField / makeChoice / removeField ---
 	const f = makeStore(false).init(), FG = id => f.doc.elements.find(e => e.id === id), fv = k => f.doc.fields.find(x => x.key === k);
+	f.replace({ v:2, fields:[{ key:'verpakt', type:'date' }, { key:'naam', type:'text', value:'Amnesia' }], elements:[
+		{ id:'D', type:'text', text:'Packing date: {verpakt}' }, { id:'Q', type:'qr', data:'{ VERPAKT|wifi}' },
+		{ id:'R', type:'shape', rules:[{ field:'verpakt', equals:'', set:{ hidden:true } }] },
+		{ id:'N', type:'text', text:'{naam}' } ] }, { history:false });
+	f.select(['D', 'N']);
+	const beforeDeleteField = J(f.doc);
+	ok('deleteField verwijdert veld, gekoppelde tekst/code/regels en snoeit selectie', f.deleteField('verpakt')
+		&& !fv('verpakt') && J(f.doc.elements.map(e => e.id)) === J(['N']) && J(f.selection) === J(['N']));
+	f.undo();
+	ok('deleteField herstelt veld en label samen met één undo', J(f.doc) === beforeDeleteField && !f.canUndo());
+	FG('D').locked = true;
+	ok('deleteField beschermt vergrendelde onderdelen zonder gedeeltelijke wijziging', !f.deleteField('verpakt') && !!fv('verpakt') && f.doc.elements.length === 4);
 	f.replace({ v:2, label:{ w:40, h:30 }, fields:[{ key:'naam', type:'text', value:'A' }, { key:'soort', type:'choice', options:['Indica', 'Sativa'], value:'Indica' },
 		{ key:'bio', type:'toggle', value:false }, { key:'tht', type:'date', value:'', offset:3 }, { key:'thc', type:'number', value:'20' }], elements:[{ type:'text', id:'N', text:'{naam}' }] }, { history:false });
 	f.setField('naam', 'Am'); f.setField('naam', 'Amnesia'); f.setField('soort', 'Sativa'); f.setField('bio', true); f.setField('thc', 22);

@@ -743,10 +743,10 @@ function focusField(key) { const r = fillUI?.rows.get(key); if (r) focusRow(r); 
 function fieldRow(f) {
 	const key = f.key, lab = h('span', { class: 'ff-label' }), csv = h('span', { class: 'ff-csv', hidden: true });
 	const del = ib('trash', 'Invulveld verwijderen', () => {
-		app.removeField(key, A.previewRow());
-		toast('Invulveld verwijderd; de tekst staat weer vast op het label. Ctrl+Z zet het terug.');
+		if (!app.deleteField(key)) { toast('Ontgrendel eerst de gekoppelde labelelementen.', 'err'); return; }
+		toast('Invulveld en gekoppelde labelelementen verwijderd. Ctrl+Z zet ze terug.');
 	}, 'sm ff-del');
-	// Geen tab-stop: Tab+Enter vanuit een veld wiste anders het volgende veld. Toetsenbord: Bewerken > Invulveld opheffen.
+	// Geen tab-stop: Tab+Enter vanuit een veld wiste anders het volgende veld.
 	del.tabIndex = -1;
 	const r = { key, sig: fieldRowSig(f), el: null, focus: () => null, ups: [] };
 	let body, pills = null, inp = null;
