@@ -8,7 +8,7 @@ const uuid = n => `0000${n}-0000-1000-8000-00805f9b34fb`;
 const SERVICE = uuid('ff00'), WRITE = uuid('ff02'), NOTIFY = uuid('ff03');
 
 export function createBlePrinter({ getBluetooth = () => globalThis.navigator?.bluetooth,
-	pause = sleep, timeout = 15000 } = {}) {
+	pause = sleep, now = () => performance.now(), timeout = 15000 } = {}) {
 	let cb = { onStatus() {}, onLog() {}, onConnection() {} };
 	let device = null, writer = null, notify = null, pending = false, busy = false;
 	let chunkSize = 20;
@@ -88,7 +88,9 @@ export function createBlePrinter({ getBluetooth = () => globalThis.navigator?.bl
 			try {
 				const limits = await limit(server.getWriteLimits?.(), 'BLE-pakketgrootte');
 				const size = write.properties.writeWithoutResponse && write.writeValueWithoutResponse ? limits?.withoutResponse : limits?.withResponse;
-				const payload = size ?? (limits?.mtu > 3 ? limits.mtu - 3 : 20);
+				// Sommige extensieversies melden alleen getMtu; die route werd onbedoeld 20 bytes.
+				const mtu = limits?.mtu ?? (Number.isInteger(size) && size > 0 ? null : await limit(server.getMtu?.(), 'BLE-MTU'));
+				const payload = Number.isInteger(size) && size > 0 ? size : (Number.isInteger(mtu) && mtu > 3 ? mtu - 3 : 20);
 				if (Number.isInteger(payload) && payload >= 20) chunkSize = Math.min(128, payload);
 			} catch { /* Optionele metadata; geen grotere pakketten gokken. */ }
 			if (!device?.gatt.connected) throw new Error('Bluetooth-verbinding verbroken.');
@@ -140,12 +142,14 @@ export function createBlePrinter({ getBluetooth = () => globalThis.navigator?.bl
 						if (!isConnected()) throw new Error('Bluetooth-verbinding verbroken.');
 						const chunk = bytes.slice(start, start + chunkSize);
 						const method = writer.properties.writeWithoutResponse && writer.writeValueWithoutResponse ? 'writeValueWithoutResponse' : 'writeValueWithResponse';
+						const started = now();
 						await limit(writer[method](chunk), 'BLE schrijven');
 						sent += chunk.length;
 						const next = Math.floor(sent / job.length * 10) * 10;
 						if (next !== percent) { percent = next; status(`BLE: label ${i + 1} / ${count} versturen · ${percent}%`); }
 						// 20 ms veroorzaakte de gemelde extensielimiet. Geen automatische herhaling van printbytes.
-						await pause(200);
+						// De bridge-wachttijd telt mee: niet nog 200 ms bovenop een trage write wachten.
+						await pause(Math.max(0, 200 - (now() - started)));
 					}
 				};
 				status(`BLE: label ${i + 1} / ${count} versturen…`);
@@ -196,11 +200,12 @@ export async function selftest() {
 			if (mode === 'rate-error') throw new Error('Rate limit exceeded — too many BLE requests');
 			if (mode === 'limited' && times.filter(t => clock - t < 1000).length >= 5) throw new Error('Rate limit exceeded — too many BLE requests');
 			times.push(clock); sizes.push(data.length);
+			if (mode === 'slow-bridge') clock += 120;
 			writes.push(...data);
 			if (mode === 'write-error') throw new Error('schrijffout');
 			if (mode === 'disconnect') { device.gatt.connected = false; listeners.get('gattserverdisconnected')?.(); }
 			if (data.length === 8 && data[0] === 0x1f && data[1] === 0xf0) {
-				if (['ack', 'limited', 'mtu'].includes(mode)) { emit([0x99, 0x1a]); emit([0x0f]); emit([0x0c, 0x77]); }
+				if (['ack', 'limited', 'mtu', 'mtu-only', 'slow-bridge'].includes(mode)) { emit([0x99, 0x1a]); emit([0x0f]); emit([0x0c, 0x77]); }
 				if (mode === 'reject') emit([0x1a, 0x0f, 0x0c, 0x1a, 0x0b, 0xb8]);
 			}
 		} };
@@ -217,8 +222,9 @@ export async function selftest() {
 				disconnect() { this.connected = false; } } };
 		let picks = 0;
 		if (mode === 'mtu') device.gatt.getWriteLimits = async () => ({ withoutResponse: 182 });
+		if (mode === 'mtu-only') device.gatt.getMtu = async () => 185;
 		const bluetooth = { requestDevice() { picks++; return Promise.resolve(device); } };
-		const p = createBlePrinter({ getBluetooth: () => bluetooth, pause: async ms => { clock += ms; }, timeout: 20 });
+		const p = createBlePrinter({ getBluetooth: () => bluetooth, pause: async ms => { clock += ms; }, now: () => clock, timeout: 20 });
 		return { p, writes, bluetooth, times, sizes, setMode(value) { mode = value; }, get picks() { return picks; } };
 	}
 	const print = { speed: 5, density: 10, media: 10, offset: 0 };
@@ -234,13 +240,15 @@ export async function selftest() {
 		assert(await m.p.printLabels(1, () => frame, print) === 1, 'gefragmenteerde ACK bevestigt label');
 		assert(hex(m.writes) === hex(buildJob(encodeRaster(frame.rgba, 8, 1, 0, false), print)), 'BLE behoudt alle bevroren printbytes');
 		const label = { W:320, H:240, rgba:new Uint8Array(320 * 240 * 4) };
-		for (const mode of ['limited', 'mtu']) {
+		for (const mode of ['limited', 'mtu', 'mtu-only', 'slow-bridge']) {
 			const test = mock(mode); await test.p.connect(true);
 			assert(await test.p.printLabels(1, () => label, print) === 1
 				&& hex(test.writes) === hex(buildJob(encodeRaster(label.rgba, label.W, label.H, 0, false), print))
 				&& test.times.every((t, i) => !i || t - test.times[i - 1] >= 200)
-				&& Math.max(...test.sizes) === (mode === 'mtu' ? 128 : 20),
+				&& Math.max(...test.sizes) === (mode.startsWith('mtu') ? 128 : 20),
 				`${mode}: volledig 40x30-label byte-identiek, begrensd tempo en veilige pakketgrootte`);
+			if (mode === 'slow-bridge') assert(test.times[6] - test.times[5] === 200, 'bridge-latency telt mee: 120ms write + 80ms pauze, geen dubbele wachttijd');
+			if (mode === 'mtu-only') assert(test.times.length === 81, 'MTU-only: 81 writes voor 40x30 in plaats van 486');
 		}
 		const wide = mock(); await wide.p.connect(true);
 		const wideFrame = { W: 400, H: 1, rgba: new Uint8Array(1600) };
