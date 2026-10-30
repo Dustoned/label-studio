@@ -11,6 +11,7 @@ export function createBlePrinter({ getBluetooth = () => globalThis.navigator?.bl
 	pause = sleep, timeout = 15000 } = {}) {
 	let cb = { onStatus() {}, onLog() {}, onConnection() {} };
 	let device = null, writer = null, notify = null, pending = false, busy = false;
+	let chunkSize = 20;
 	let tail = [], reply = null;
 	const status = (text, cls = '') => cb.onStatus(text, cls);
 	const isConnected = () => !!writer && !!device?.gatt?.connected;
@@ -24,6 +25,7 @@ export function createBlePrinter({ getBluetooth = () => globalThis.navigator?.bl
 		if (device) device.removeEventListener('gattserverdisconnected', disconnected);
 		const old = device;
 		device = writer = notify = null;
+		chunkSize = 20;
 		tail = [];
 		try { old?.gatt?.disconnect(); } catch { /* Reeds verbroken. */ }
 		cb.onConnection(false);
@@ -81,8 +83,17 @@ export function createBlePrinter({ getBluetooth = () => globalThis.navigator?.bl
 			}
 			notify.addEventListener('characteristicvaluechanged', received);
 			await limit(notify.startNotifications(), 'BLE-meldingen');
+			// Beacio exposeert deze optionele GATT-limieten ook aan zijn eigen SDK.
+			// Zonder gerapporteerde limiet blijft de veilige ATT-payload 20 bytes.
+			try {
+				const limits = await limit(server.getWriteLimits?.(), 'BLE-pakketgrootte');
+				const size = write.properties.writeWithoutResponse && write.writeValueWithoutResponse ? limits?.withoutResponse : limits?.withResponse;
+				const payload = size ?? (limits?.mtu > 3 ? limits.mtu - 3 : 20);
+				if (Number.isInteger(payload) && payload >= 20) chunkSize = Math.min(128, payload);
+			} catch { /* Optionele metadata; geen grotere pakketten gokken. */ }
 			if (!device?.gatt.connected) throw new Error('Bluetooth-verbinding verbroken.');
 			writer = write;
+			cb.onLog(`BLE verzenden: ${chunkSize} bytes per pakket, minimaal 200 ms tussen writes.`);
 			cb.onConnection(true);
 			status('BLE verbonden · printondersteuning nog te bevestigen');
 			return true;
@@ -122,14 +133,19 @@ export function createBlePrinter({ getBluetooth = () => globalThis.navigator?.bl
 				if (!Number.isInteger(W) || !Number.isInteger(H) || W < 1 || W > 50 * DPM || H < 1 || H > 65535 || rgba.length !== W * H * 4) throw new Error('Ongeldig labelraster.');
 				const job = buildJob(encodeRaster(rgba, W, H, Math.max(0, Math.round(print.offset * DPM) || 0), !!print.rotate180), print);
 				const response = waitForReply();
+				let sent = 0, percent = -1;
 				const send = async bytes => {
-					for (let start = 0; start < bytes.length; start += 20) {
+					for (let start = 0; start < bytes.length; start += chunkSize) {
 						if (response.error) throw response.error;
 						if (!isConnected()) throw new Error('Bluetooth-verbinding verbroken.');
-						const chunk = bytes.slice(start, start + 20);
+						const chunk = bytes.slice(start, start + chunkSize);
 						const method = writer.properties.writeWithoutResponse && writer.writeValueWithoutResponse ? 'writeValueWithoutResponse' : 'writeValueWithResponse';
 						await limit(writer[method](chunk), 'BLE schrijven');
-						await pause(20);
+						sent += chunk.length;
+						const next = Math.floor(sent / job.length * 10) * 10;
+						if (next !== percent) { percent = next; status(`BLE: label ${i + 1} / ${count} versturen · ${percent}%`); }
+						// 20 ms veroorzaakte de gemelde extensielimiet. Geen automatische herhaling van printbytes.
+						await pause(200);
 					}
 				};
 				status(`BLE: label ${i + 1} / ${count} versturen…`);
@@ -152,7 +168,9 @@ export function createBlePrinter({ getBluetooth = () => globalThis.navigator?.bl
 			status(`${printed} label(s) door de printer bevestigd.`, 'ok');
 		} catch (e) {
 			clearConnection();
-			status(`${e.message} ${printed}/${count} label(s) bevestigd. Controleer vóór opnieuw printen.`, 'err');
+			const message = /rate limit|too many BLE requests/i.test(e.message)
+				? 'Bluetooth-extensie begrenst het verzenden. Wacht een minuut en verbind opnieuw. Zet bij een onvolledig label de printer eerst uit en aan.' : e.message;
+			status(`${message} ${printed}/${count} label(s) bevestigd. Controleer vóór opnieuw printen.`, 'err');
 		} finally { reply = null; busy = false; }
 		return printed;
 	}
@@ -168,16 +186,21 @@ export async function selftest() {
 	const assert = (yes, text) => { if (!yes) throw new Error(text); details.push(text); };
 	function mock(mode = 'ack') {
 		const listeners = new Map(), writes = [];
+		let clock = 0;
+		const times = [], sizes = [];
 		const emit = bytes => notification.listener?.({ target: { value: new DataView(Uint8Array.from(bytes).buffer) } });
 		const notification = { uuid: NOTIFY, properties: { notify: true },
 			addEventListener(_, fn) { this.listener = fn; }, removeEventListener() { this.listener = null; },
 			async startNotifications() {} };
 		const writable = { uuid: WRITE, properties: { writeWithoutResponse: true }, async writeValueWithoutResponse(data) {
+			if (mode === 'rate-error') throw new Error('Rate limit exceeded — too many BLE requests');
+			if (mode === 'limited' && times.filter(t => clock - t < 1000).length >= 5) throw new Error('Rate limit exceeded — too many BLE requests');
+			times.push(clock); sizes.push(data.length);
 			writes.push(...data);
 			if (mode === 'write-error') throw new Error('schrijffout');
 			if (mode === 'disconnect') { device.gatt.connected = false; listeners.get('gattserverdisconnected')?.(); }
 			if (data.length === 8 && data[0] === 0x1f && data[1] === 0xf0) {
-				if (mode === 'ack') { emit([0x99, 0x1a]); emit([0x0f]); emit([0x0c, 0x77]); }
+				if (['ack', 'limited', 'mtu'].includes(mode)) { emit([0x99, 0x1a]); emit([0x0f]); emit([0x0c, 0x77]); }
 				if (mode === 'reject') emit([0x1a, 0x0f, 0x0c, 0x1a, 0x0b, 0xb8]);
 			}
 		} };
@@ -193,9 +216,10 @@ export async function selftest() {
 				async getPrimaryService(id) { if (id !== SERVICE) throw new Error('UUID'); return service; },
 				disconnect() { this.connected = false; } } };
 		let picks = 0;
+		if (mode === 'mtu') device.gatt.getWriteLimits = async () => ({ withoutResponse: 182 });
 		const bluetooth = { requestDevice() { picks++; return Promise.resolve(device); } };
-		const p = createBlePrinter({ getBluetooth: () => bluetooth, pause: async () => {}, timeout: 20 });
-		return { p, writes, bluetooth, setMode(value) { mode = value; }, get picks() { return picks; } };
+		const p = createBlePrinter({ getBluetooth: () => bluetooth, pause: async ms => { clock += ms; }, timeout: 20 });
+		return { p, writes, bluetooth, times, sizes, setMode(value) { mode = value; }, get picks() { return picks; } };
 	}
 	const print = { speed: 5, density: 10, media: 10, offset: 0 };
 	const frame = { W: 8, H: 1, rgba: new Uint8Array(32) };
@@ -209,6 +233,15 @@ export async function selftest() {
 		assert(await connecting, 'bekend GATT-profiel verbindt');
 		assert(await m.p.printLabels(1, () => frame, print) === 1, 'gefragmenteerde ACK bevestigt label');
 		assert(hex(m.writes) === hex(buildJob(encodeRaster(frame.rgba, 8, 1, 0, false), print)), 'BLE behoudt alle bevroren printbytes');
+		const label = { W:320, H:240, rgba:new Uint8Array(320 * 240 * 4) };
+		for (const mode of ['limited', 'mtu']) {
+			const test = mock(mode); await test.p.connect(true);
+			assert(await test.p.printLabels(1, () => label, print) === 1
+				&& hex(test.writes) === hex(buildJob(encodeRaster(label.rgba, label.W, label.H, 0, false), print))
+				&& test.times.every((t, i) => !i || t - test.times[i - 1] >= 200)
+				&& Math.max(...test.sizes) === (mode === 'mtu' ? 128 : 20),
+				`${mode}: volledig 40x30-label byte-identiek, begrensd tempo en veilige pakketgrootte`);
+		}
 		const wide = mock(); await wide.p.connect(true);
 		const wideFrame = { W: 400, H: 1, rgba: new Uint8Array(1600) };
 		const wideRaster = encodeRaster(wideFrame.rgba, 400, 1, 0, false);
@@ -223,6 +256,12 @@ export async function selftest() {
 			assert(await test.p.printLabels(1, () => frame, print) === 0 && !test.p.isBusy() && !test.p.isConnected(), `${mode}: geen vals succes, verbinding en busy opgeruimd`);
 		}
 		const unknown = mock('unknown');
+		const throttled = mock('rate-error');
+		let errorText = '';
+		throttled.p.initPrinter({ onStatus: text => { errorText = text; } });
+		await throttled.p.connect(true);
+		assert(await throttled.p.printLabels(2, () => frame, print) === 0 && !throttled.p.isConnected()
+			&& !throttled.writes.length && errorText.includes('Wacht een minuut'), 'rate-limit stopt batch zonder herprint en geeft hersteladvies');
 		assert(!await unknown.p.connect(true) && !unknown.writes.length, 'onbekend profiel weigert zonder schrijfacties');
 		const b = mock(); await b.p.connect(true);
 		let release;
