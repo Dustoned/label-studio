@@ -704,11 +704,26 @@ function buildDrawer() {
 const fieldOf = key => app.doc.fields.find(f => f.key === key);
 // Eerste {token} van de tekst dat een invulveld is (Maak invulveld/opheffen, dubbelklik naar Invullen).
 const fieldKey = e => { const keys = new Set(app.doc.fields.map(f => f.key)); return tokenKeys(e?.text).find(k => keys.has(k)) || null; };
+// Oude labels missen nieuwe veldkoppelingen. Alleen exact herkenbare templateonderdelen meenemen, nooit op nabijheid gokken.
+function templateFieldParts(doc, keys = null) {
+	const template = TEMPLATES.find(t => t.name === doc.name);
+	if (!template) return [];
+	const fields = new Set(keys || (template.doc.fields || []).filter(f => !doc.fields.some(x => x.key === f.key)).map(f => f.key));
+	if (!fields.size) return [];
+	const ref = adaptTemplate(template.doc, doc.label, { print: doc.print });
+	const signature = el => JSON.stringify(Object.entries(el).filter(([k]) => !['id', 'name', 'rules', 'nodes', 'svg'].includes(k)).sort(([a], [b]) => a.localeCompare(b)));
+	const parts = new Set(ref.elements.filter(e => e.rules.some(r => fields.has(r.field))).map(signature));
+	return doc.elements.filter(e => parts.has(signature(e))).map(e => e.id);
+}
 function buildFill(root) {
 	const list = h('div', { class: 'ff-list', title: 'Enter = volgende veld' });
 	const empty = h('div', { class: 'ff-empty' }, ic('form', 28), h('strong', {}, 'Nog geen invulvelden'),
 		h('span', {}, 'Kies een template met velden.'),
 		h('button', { type: 'button', class: 'btn sm', onclick: () => openTab('templates', true) }, 'Templates bekijken'));
+	const cleanup = h('button', { type: 'button', class: 'btn', id: 'cleanupFieldParts', hidden: true, onclick: () => {
+		app.remove(templateFieldParts(app.doc));
+		toast('Restanten van verwijderde velden opgeruimd. Ongedaan maken zet ze terug.');
+	} }, 'Restanten opruimen');
 	// Enter = volgende veld; op een keuzeknop eerst die keuze maken.
 	list.addEventListener('keydown', e => {
 		if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
@@ -724,8 +739,8 @@ function buildFill(root) {
 	// Rij wisselen kan ook hier: met een lijst toont het label de rij, niet wat je invult.
 	const cnt = h('span', { class: 'muted' }), nav = h('div', { class: 'rownav ff-rownav', hidden: true },
 		ib('chevL', 'Vorige rij', () => stepRow(-1)), cnt, ib('chevR', 'Volgende rij', () => stepRow(1)));
-	fillUI = { list, empty, nav, cnt, rows: new Map() };
-	root.append(dsec(null, nav, list, empty));
+	fillUI = { list, empty, nav, cnt, cleanup, rows: new Map() };
+	root.append(dsec(null, nav, list, cleanup, empty));
 	panels.push({ root, scope: () => [], ups: [refreshFill] });
 }
 // Voorbeeldrij = sessiestaat (buiten de undo, maar ook niet door Ctrl+Z teruggezet); gedeeld door Data en Invullen.
@@ -743,7 +758,7 @@ function focusField(key) { const r = fillUI?.rows.get(key); if (r) focusRow(r); 
 function fieldRow(f) {
 	const key = f.key, lab = h('span', { class: 'ff-label' }), csv = h('span', { class: 'ff-csv', hidden: true });
 	const del = ib('trash', 'Invulveld verwijderen', () => {
-		if (!app.deleteField(key)) { toast('Ontgrendel eerst de gekoppelde labelelementen.', 'err'); return; }
+		if (!app.deleteField(key, templateFieldParts(app.doc, [key]))) { toast('Ontgrendel eerst de gekoppelde labelelementen.', 'err'); return; }
 		toast('Invulveld en gekoppelde labelelementen verwijderd. Ctrl+Z zet ze terug.');
 	}, 'sm ff-del');
 	// Geen tab-stop: Tab+Enter vanuit een veld wiste anders het volgende veld.
@@ -863,6 +878,8 @@ function refreshFill() {
 		place(r, e, fs.length + j);
 	});
 	u.empty.hidden = fs.length + imgs.length > 0;
+	const remnants = new Set(templateFieldParts(app.doc));
+	u.cleanup.hidden = !app.doc.elements.some(e => remnants.has(e.id) && !e.locked);
 	const n = A.rows().length;
 	u.nav.hidden = !n || !fs.length;
 	if (!u.nav.hidden) setText(u.cnt, `Rij ${clamp(parseInt(app.doc.batch.row) || 1, 1, n)} van ${n}`);
@@ -2742,6 +2759,25 @@ export async function selftest() {
 	if (!app.doc) app.init();   // node (tools/check.js): geen start(); in de browser is het doc er al
 	const details = [];
 	const t = (c, m) => { if (!c) details.push('FOUT: ' + m); };
+	const potTemplate = TEMPLATES.find(x => x.id === 'weed-strain-pot');
+	const pot = adaptTemplate(potTemplate.doc, { w:40, h:30, shape:'rect' }); pot.name = potTemplate.name;
+	const oldPot = structuredClone(pot);
+	for (const e of oldPot.elements) e.rules = [];
+	const thcParts = new Set(templateFieldParts(oldPot, ['thc']));
+	t(oldPot.elements.some(e => e.text === 'THC' && thcParts.has(e.id))
+		&& !oldPot.elements.some(e => e.text === 'GRAM' && thcParts.has(e.id)), 'oud potlabel: THC-kop hoort bij THC, GRAM niet');
+	const typeParts = new Set(templateFieldParts(oldPot, ['type']));
+	t(oldPot.elements.filter(e => e.type === 'shape' && typeParts.has(e.id)).length === 3, 'oud potlabel: keuzevak en twee tussenschotten horen bij Soort');
+	oldPot.fields = [];
+	oldPot.elements = oldPot.elements.filter(e => !tokenKeys(e.text || e.data).length && !['INDICA', 'HYBRIDE', 'SATIVA'].includes(e.text));
+	const remnants = new Set(templateFieldParts(oldPot));
+	t(oldPot.elements.filter(e => !remnants.has(e.id)).every(e => e.type === 'border'), 'lege oude potlabel: alle veldrestanten weg, buitenrand blijft');
+	oldPot.elements.find(e => e.text === 'THC').text = 'Eigen kop';
+	t(!templateFieldParts(oldPot).includes(oldPot.elements.find(e => e.text === 'Eigen kop').id), 'aangepaste tekst wordt niet als template-restant gegokt');
+	for (const template of TEMPLATES.filter(x => !x.doc.fields)) {
+		const legacy = normalizeTemplateDoc(template.doc); legacy.name = template.name;
+		t(templateFieldParts(legacy).length === 0, 'template zonder veldmetadata blijft bruikbaar: ' + template.name);
+	}
 	const savedDoc = app.doc, target = { id: 'foto' }, targetDoc = { elements: [target] };
 	try {
 		app.doc = targetDoc;

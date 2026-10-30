@@ -34,6 +34,8 @@ const ify = (icon, x, y, s, o = {}) => ({ type: 'icon', source: 'iconify', icon,
 const emo = (char, x, y, s, o = {}) => ({ type: 'emoji', char, style: 'mono', weight: 600, x, y, w: s, h: s, ...o });
 const B = { bold: true }, I = { italic: true };
 const SOORT = ['Indica', 'Hybride', 'Sativa'];
+// De gedeelde keuzekaders horen bij hetzelfde veld als de optie-teksten.
+const typeFrame = { rules: SOORT.map(equals => ({ field: 'type', equals, set: { hidden: false } })) };
 const OSW = 'Oswald', MONO = 'Roboto Mono', MONT = 'Montserrat';
 
 export default [
@@ -47,16 +49,16 @@ export default [
 		fdate('verpakt', 'Verpakt'),
 	], [
 		brd('rounded'),
-		tab('cannabis', 3, 2.9, 7, { stroke: 1.5 }),
+		tab('cannabis', 3, 2.9, 7, { stroke: 1.5, ...ifSet('strain') }),
 		box('{strain}', 11.2, 2.6, 25.9, 7.6, { font: 'Bebas Neue', size: 6, letterSpacing: 0.2 }),
-		shp('rect', 2.9, 11, 34.2, 4.4, { stroke: 0.35 }),
-		rule(14.2, 11, 0.35, 4.4), rule(25.45, 11, 0.35, 4.4),
+		shp('rect', 2.9, 11, 34.2, 4.4, { stroke: 0.35, ...typeFrame }),
+		{ ...rule(14.2, 11, 0.35, 4.4), ...typeFrame }, { ...rule(25.45, 11, 0.35, 4.4), ...typeFrame },
 		...SOORT.map((s, i) => one(s.toUpperCase(), 2.9 + i * 11.4, 11, 11.4, 4.4, { size: 2, ...B, letterSpacing: 0.15, ...on('type', s) })),
-		cap('THC', 3.3, 16.4, 10), one('{thc}%', 3.3, 18.8, 10, 5.2, { font: OSW, size: 3.9, ...B }),
-		rule(14.15, 16.8, 0.3, 6.6),
+		cap('THC', 3.3, 16.4, 10, ifSet('thc')), one('{thc}%', 3.3, 18.8, 10, 5.2, { font: OSW, size: 3.9, ...B }),
+		{ ...rule(14.15, 16.8, 0.3, 6.6), rules: [...ifSet('thc').rules, ...ifSet('cbd').rules] },
 		cap('CBD', 15, 16.4, 10, ifSet('cbd')), one('{cbd}%', 15, 18.8, 10, 5.2, { font: OSW, size: 3.9, ...B, ...ifSet('cbd') }),
-		{ ...rule(25.85, 16.8, 0.3, 6.6), ...ifSet('cbd') },
-		cap('GRAM', 26.7, 16.4, 10), one('{gram} g', 26.7, 18.8, 10, 5.2, { font: OSW, size: 3.9, ...B }),
+		{ ...rule(25.85, 16.8, 0.3, 6.6), rules: [...ifSet('cbd').rules, ...ifSet('gram').rules] },
+		cap('GRAM', 26.7, 16.4, 10, ifSet('gram')), one('{gram} g', 26.7, 18.8, 10, 5.2, { font: OSW, size: 3.9, ...B }),
 		one('Verpakt op {verpakt}', 2.9, 24.6, 34.2, 2.8, { size: 2 }),
 	]),
 	T('jar-badge', 'Jar-badge', ['jar', 'pot', 'badge', 'strain', 'indica', 'sativa', 'hybride', 'thc', 'voorraad'], [
