@@ -1,0 +1,29 @@
+/* Online-iconen: collectielijst + raster (js/iconbrowser.js). Alleen tokens uit app.css; het raster hergebruikt .icon-grid/.icon-cell. */
+.ibr-state { display: grid; justify-items: center; gap: 8px; }
+
+/* collectie-rij: naam + aantal, daaronder voorbeelden + licentie; ster ernaast (geen knop in een knop) */
+.ibr-row { display: flex; align-items: center; gap: 2px; margin-bottom: 6px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); transition: border-color .12s, box-shadow .12s; }
+.ibr-row:hover { border-color: var(--accent); box-shadow: var(--sh-1); }
+.ibr-open { flex: 1; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) 72px; align-items: center; gap: 4px 8px; padding: 8px 4px 8px 10px; border: 0; border-radius: var(--r) 0 0 var(--r); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.ibr-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* vaste rechterkolom (aantal + licentiecode): rechte kolommen, de naam krijgt de rest; contrast = --muted (AA) */
+.ibr-n, .ibr-lic { color: var(--muted); font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; text-align: right; }
+.ibr-lic { overflow: hidden; text-overflow: ellipsis; }
+.ibr-samples { display: flex; gap: 6px; height: 18px; overflow: hidden; }
+.ibr-samples img { width: 18px; height: 18px; flex: none; }
+.ibr-star { margin-right: 4px; }
+.ibr-star[aria-pressed=true] { color: var(--warn); }
+.ibr-star[aria-pressed=true] svg { fill: currentColor; }
+
+/* collectiekop */
+.ibr-head { display: flex; align-items: center; gap: 4px; margin: -4px 0 2px -6px; }
+.ibr-title { flex: 1; min-width: 0; font-size: 14px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ibr-sub { font-size: 11px; margin: 0 0 8px 30px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ibr-sub a { color: inherit; text-decoration: underline; text-decoration-color: var(--line-2); text-underline-offset: 2px; }
+.ibr-sub a[href]:hover { color: var(--accent-ink); }
+.ibr-more { width: 100%; margin-top: 8px; }
+
+/* zwarte iconen op een donker paneel; het raster staat op --tile (papier) en blijft zwart */
+@media (prefers-color-scheme: dark) {
+	.ibr-samples img { filter: invert(1); }
+}

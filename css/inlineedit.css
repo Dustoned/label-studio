@@ -1,0 +1,14 @@
+/* Inline tekst bewerken op het canvas (js/inlineedit.js). Maat/font/positie zet de js; de tekst zelf is de render eronder,
+   hier alleen caret en selectie. :hover/:focus-visible erbij: die zetten in app.css rand en ring op elke textarea. */
+/* Kliplaag over het label: tekst die uitsteekt vergroot het scrollvlak niet (anders sprong het label tijdens het typen). */
+.ie-clip { position: absolute; inset: 0; overflow: clip; pointer-events: none; z-index: 1; }
+/* forced-color-adjust: hoog contrast negeert anders color: transparent en legt een zwart blok over de render. */
+textarea.ie, textarea.ie:hover, textarea.ie:focus-visible { position: absolute; z-index: 1; box-sizing: content-box; min-width: 0; min-height: 0;
+	max-width: none; margin: 0; padding: 0; border: 0; border-radius: 0; outline: 0; box-shadow: none; background: transparent; resize: none;
+	overflow: hidden; overflow-wrap: break-word; color: transparent; -webkit-text-fill-color: transparent; caret-color: var(--accent);
+	transition: none; cursor: text; pointer-events: auto; forced-color-adjust: none; }
+textarea.ie::selection { background: rgb(44 100 246 / .3); color: transparent; -webkit-text-fill-color: transparent; }
+/* Getypte {veld}: het canvas toont de waarde, niet de token. Dan de tekst zelf tonen (inlineedit.js zet .raw).
+   Papierkleuren zoals #view, geen themakleuren: in donker thema leek het anders op Omkeren. */
+textarea.ie.raw, textarea.ie.raw::selection { color: #000; -webkit-text-fill-color: currentColor; }
+textarea.ie.raw { background: #fff; }

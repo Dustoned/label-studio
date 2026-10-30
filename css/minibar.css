@@ -1,0 +1,12 @@
+/* Zwevende mini-werkbalk boven de selectie (js/minibar.js). Positie via transform; kleuren uit de tokens van app.css. */
+.minibar { position: absolute; left: 0; top: 0; z-index: 10; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 4px;
+	background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--sh-2);
+	animation: mb-in .12s ease-out; }
+.mb-btn { display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--r-xs);
+	background: transparent; color: var(--text-2); cursor: pointer; transition: background .12s, color .12s; }
+.mb-btn:hover { background: var(--hover); color: var(--text); }
+.mb-btn:active { background: var(--press); }
+.mb-btn[aria-pressed=true] { background: var(--accent-soft); color: var(--accent-ink); }
+.mb-btn.danger:hover { background: var(--danger-soft); color: var(--danger); }
+.mb-sep { flex: none; width: 1px; height: 20px; margin: 0 4px; background: var(--line); }
+@keyframes mb-in { from { opacity: 0; } }

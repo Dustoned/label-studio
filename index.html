@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Label Studio</title>
+<meta name="description" content="Paywall-vrije label-designer voor de Phomemo M110S">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%232c64f6'/%3E%3Cpath d='M5 9a2 2 0 0 1 2-2h7.6l4.4 5-4.4 5H7a2 2 0 0 1-2-2z' fill='white'/%3E%3Ccircle cx='15' cy='12' r='1.3' fill='%232c64f6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/minibar.css">
+<link rel="stylesheet" href="css/iconbrowser.css">
+<link rel="stylesheet" href="css/inlineedit.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/bwip-js/4.5.1/bwip-js-min.js" integrity="sha512-nyvUcUIS1L4Z+cowD7We9KKcq/ivAJhTlhZTjBfBFGYV1I+RAqSrHS/WEcWDp1CVKRw1j5SxYCPCSYOQxuIE1w==" crossorigin="anonymous"></script>
+<!-- blocking: eerste frame pas na de UI-opbouw; anders verspringen topbalk, rail en paneel bij elke start -->
+<script type="module" blocking="render" src="js/main.js"></script>
+</head>
+<body>
+<header class="topbar" id="topbar">
+	<div class="brand">
+		<span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 8.5A2.5 2.5 0 0 1 6.5 6h8.2a2 2 0 0 1 1.5.7l3.6 4.3a1.5 1.5 0 0 1 0 2l-3.6 4.3a2 2 0 0 1-1.5.7H6.5A2.5 2.5 0 0 1 4 15.5z" fill="currentColor"/><circle cx="15.2" cy="12" r="1.4" fill="var(--accent)"/></svg></span>
+		<span class="brand-name">Label Studio</span>
+	</div>
+	<button type="button" class="btn ghost file-btn" id="btnFile" data-icon="menu" aria-haspopup="menu" aria-expanded="false" aria-controls="fileMenu" title="Bestand"><span id="fileName" class="file-name">Naamloos label</span></button>
+	<div class="spacer"></div>
+	<span class="tb-sep" aria-hidden="true"></span>
+	<div class="tb-group">
+		<button type="button" class="btn ghost ib" id="btnUndo" data-icon="undo" title="Ongedaan maken (Ctrl+Z)" aria-label="Ongedaan maken"></button>
+		<button type="button" class="btn ghost ib" id="btnRedo" data-icon="redo" title="Opnieuw (Ctrl+Y)" aria-label="Opnieuw"></button>
+	</div>
+	<button type="button" class="btn ghost" id="btnTidy" data-icon="wand" title="Netjes maken: alles in verhouding schalen en centreren"><span class="tb-text">Netjes maken</span></button>
+	<span class="tb-sep" aria-hidden="true"></span>
+	<div class="tb-group" role="group" aria-label="Zoom">
+		<button type="button" class="btn ghost ib" id="zoomOut" data-icon="minus" title="Uitzoomen" aria-label="Uitzoomen"></button>
+		<output id="zoomPct" class="zoom-pct" title="Zoom (100% = ware grootte). Ctrl+scroll op het label zoomt ook." aria-live="off">100%</output>
+		<button type="button" class="btn ghost ib" id="zoomIn" data-icon="plus" title="Inzoomen" aria-label="Inzoomen"></button>
+		<button type="button" class="btn ghost ib" id="zoomFit" data-icon="fit" title="Passend maken" aria-label="Passend maken"></button>
+	</div>
+	<div class="printer" id="printer">
+		<span id="pDot" class="p-dot" aria-hidden="true"></span>
+		<span id="pStatus" class="p-status" role="status" aria-live="polite" hidden></span>
+		<button type="button" class="btn sm" id="btnConnect" data-icon="bt" data-size="14" hidden>Printer koppelen</button>
+	</div>
+	<label class="copies" id="copiesBox" title="Aantal kopieën per label"><span>Kopieën</span></label>
+	<button type="button" class="btn primary print" id="btnPrint" data-icon="printer" title="Label printen (Ctrl+P)"><span id="printLabel">Print</span><span id="printCount" class="count" hidden></span></button>
+</header>
+
+<div class="app" id="app">
+	<nav class="rail" id="rail" role="tablist" aria-label="Panelen" aria-orientation="vertical"></nav>
+	<aside class="drawer" id="drawer" aria-labelledby="drawerTitle">
+		<div class="drawer-head">
+			<button type="button" class="btn ghost ib sm" id="drawerBack" data-icon="chevL" title="Terug" aria-label="Terug" hidden></button>
+			<h2 id="drawerTitle"></h2>
+			<div class="dh-btns">
+				<button type="button" class="btn ghost ib sm" id="drawerSide" data-icon="swap" data-size="16" title="Paneel naar links" aria-label="Paneel naar links"></button>
+				<button type="button" class="btn ghost ib sm" id="drawerClose" title="Paneel inklappen" aria-label="Paneel inklappen"></button>
+			</div>
+		</div>
+		<div class="drawer-body" id="drawerBody"></div>
+	</aside>
+	<main class="stage" id="stage">
+		<div class="stage-scroll" id="stageScroll">
+			<div class="paper" id="paper">
+				<div class="label-wrap" id="labelWrap">
+					<canvas id="view" width="320" height="240" aria-label="Voorbeeld van het label"></canvas>
+					<canvas id="overlay" tabindex="0" aria-label="Label bewerken: klik om te selecteren, sleep om te verplaatsen, Tab = volgend element"></canvas>
+				</div>
+			</div>
+		</div>
+		<div class="stage-foot">
+			<span id="dims"></span>
+			<span id="selSay" class="sr-only" aria-live="polite"></span>
+			<span id="widthWarn" class="warn-pill" hidden></span>
+			<label class="switch" title="Aan: exact de printerpunten (8 per mm). Uit: scherp voorbeeld op schermresolutie."><input type="checkbox" id="pixelsToggle" role="switch"><span>Printvoorbeeld</span></label>
+		</div>
+		<div class="toasts" id="toasts" aria-live="polite"></div>
+		<div class="drop-hint" id="dropHint" hidden><div>Laat los om toe te voegen<small>Afbeelding, CSV-lijst of .json-label</small></div></div>
+	</main>
+</div>
+
+<div class="ctxmenu" id="ctxMenu" role="menu" aria-label="Elementmenu" hidden></div>
+<div class="ctxmenu filemenu" id="fileMenu" role="menu" aria-label="Bestand" hidden>
+	<label class="fm-name"><span>Naam</span><input id="docName" type="text" placeholder="Naamloos label" aria-label="Naam van dit label" spellcheck="false" autocomplete="off" maxlength="60"></label>
+	<div class="msep" role="separator"></div>
+	<button type="button" class="mi" role="menuitem" id="btnNew" data-icon="filePlus" data-size="16"><span>Nieuw label</span></button>
+	<button type="button" class="mi" role="menuitem" id="btnSaveTpl" data-icon="save" data-size="16"><span>Opslaan als template</span><kbd>Ctrl+S</kbd></button>
+	<button type="button" class="mi" role="menuitem" id="btnExport" data-icon="download" data-size="16" title="Opslaan als .json-bestand"><span>Exporteren</span></button>
+	<button type="button" class="mi" role="menuitem" id="btnImport" data-icon="upload" data-size="16" title="Een .json-bestand openen"><span>Importeren</span></button>
+	<div class="msep" role="separator"></div>
+	<button type="button" class="mi" role="menuitem" id="btnHelp" data-icon="help" data-size="16"><span>Sneltoetsen</span><kbd>?</kbd></button>
+</div>
+<input type="file" id="fileImport" accept=".json,application/json" hidden>
+
+<dialog id="dlgHelp" aria-labelledby="helpTitle">
+	<div class="dlg">
+		<h2 id="helpTitle">Sneltoetsen</h2>
+		<dl class="keys">
+			<dt><kbd>Ctrl</kbd> <kbd>Z</kbd></dt><dd>Ongedaan maken</dd>
+			<dt><kbd>Ctrl</kbd> <kbd>Y</kbd> / <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Z</kbd></dt><dd>Opnieuw</dd>
+			<dt><kbd>Ctrl</kbd> <kbd>C</kbd> / <kbd>V</kbd> / <kbd>X</kbd></dt><dd>Kopiëren, plakken, knippen</dd>
+			<dt><kbd>Ctrl</kbd> <kbd>D</kbd></dt><dd>Dupliceren</dd>
+			<dt><kbd>Ctrl</kbd> <kbd>A</kbd></dt><dd>Alles selecteren</dd>
+			<dt><kbd>Delete</kbd></dt><dd>Verwijderen</dd>
+			<dt><kbd>&larr;</kbd> <kbd>&uarr;</kbd> <kbd>&rarr;</kbd> <kbd>&darr;</kbd></dt><dd>0,5 mm verschuiven (met <kbd>Shift</kbd>: 5 mm)</dd>
+			<dt><kbd>Shift</kbd> + slepen</dt><dd>Recht verschuiven, verhouding vast, draaien in stappen van 15&deg;</dd>
+			<dt><kbd>Alt</kbd> + slepen</dt><dd>Tijdelijk niet uitlijnen (snappen uit)</dd>
+			<dt><kbd>Ctrl</kbd> + scroll</dt><dd>Zoomen</dd>
+			<dt><kbd>Esc</kbd></dt><dd>Veld verlaten, selectie opheffen, menu sluiten</dd>
+			<dt>Typen</dt><dd>Op een geselecteerde tekst: meteen bewerken</dd>
+			<dt><kbd>Tab</kbd></dt><dd>Op het label: volgend element</dd>
+			<dt><kbd>Ctrl</kbd> <kbd>P</kbd></dt><dd>Printen</dd>
+			<dt><kbd>Ctrl</kbd> <kbd>S</kbd></dt><dd>Opslaan als template</dd>
+			<dt>Dubbelklik</dt><dd>Tekst bewerken</dd>
+			<dt>Rechtermuisknop</dt><dd>Menu met meer acties</dd>
+			<dt><kbd>?</kbd></dt><dd>Deze hulp</dd>
+		</dl>
+		<p class="hint">Afbeeldingen kun je op het label slepen of plakken met <kbd>Ctrl</kbd> <kbd>V</kbd>. Een .csv-bestand slepen zet het in Data.</p>
+		<div class="dlg-actions"><button type="button" class="btn primary" id="helpClose">Sluiten</button></div>
+	</div>
+</dialog>
+
+<dialog id="dlgSave" aria-labelledby="saveTitle">
+	<form id="saveForm" method="dialog" class="dlg">
+		<h2 id="saveTitle">Opslaan als template</h2>
+		<p class="muted">Komt onder Templates &rarr; Mijn templates.</p>
+		<label class="fld"><span>Naam</span><input id="saveName" type="text" list="saveList" autocomplete="off" maxlength="60" placeholder="bv. Prijskaartje winkel"></label>
+		<datalist id="saveList"></datalist>
+		<p id="saveHint" class="hint" aria-live="polite"></p>
+		<div class="dlg-actions"><button type="button" class="btn" id="saveCancel">Annuleren</button><button class="btn primary" value="ok">Opslaan</button></div>
+	</form>
+</dialog>
+
+<dialog id="dlgAsk" aria-labelledby="askTitle">
+	<form method="dialog" class="dlg">
+		<h2 id="askTitle"></h2>
+		<p id="askMsg" class="muted"></p>
+		<div class="dlg-actions"><button type="button" class="btn" id="askCancel">Annuleren</button><button class="btn primary" id="askOk" value="ok">OK</button></div>
+	</form>
+</dialog>
+</body>
+</html>
