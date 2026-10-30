@@ -1,3 +1,4 @@
+import { publication, fetchTemplates } from './shared-templates.js';
 // Interface van Label Studio. Alles wordt 1× gebouwd; refresh() zet daarna alleen waarden en zichtbaarheid in place.
 // Niets met de DOM op module-niveau: node kan de pure helpers (selftest) importeren.
 import { DPM, MAX_W, $, clamp, normDeg, round, debounce, load, store, substitute, fieldValues, applyRules, fieldCol, h, setText, fold, words, TOKEN } from './util.js';
@@ -988,7 +989,7 @@ function buildTemplates(root) {
 	const more = h('button', { type: 'button', class: 'btn sm more-btn', onclick: () => { S.onlyMine = false; saveUi(); filter(); only.focus(); } });   // de knop verdwijnt: focus naar de schakelaar
 	secA.el.append(emptyA, more);
 	mine = { grid: h('div', { class: 'tpl-grid' }), empty: h('p', { class: 'empty' }, 'Nog niets opgeslagen (Ctrl+S).'), sig: null, cards: [] };
-	mine.el = h('section', { class: 'dsec' }, h('h3', {}, 'Mijn templates'), mine.grid, mine.empty);
+	mine.el = h('section', { class: 'dsec' }, h('h3', {}, 'Mijn templates'), h('button', {type:'button',class:'btn sm',onclick:()=>refreshOnline(true)}, 'Online vernieuwen'), mine.grid, mine.empty);
 	function place() {
 		const L = app.doc.label, sig = labelSig();
 		if (sig === placed) return;
@@ -1044,6 +1045,8 @@ function buildTemplates(root) {
 		h('label', { class: 'switch only-mine', title: 'Alleen templates die exact op je huidige labelmaat en -vorm ontworpen zijn' }, only, h('span', {}, 'Alleen mijn formaat'))),
 		mine.el, secA.el, secB.el);
 	refreshMine();
+	void refreshOnline();
+	addEventListener('focus', () => refreshOnline());
 	// Opgeslagen/verwijderd in een ander venster: anders laadde een kaart hier nog de oude versie (null = alles gewist).
 	addEventListener('storage', e => { if (e.key === 'pm110.v2.templates' || e.key === null) refreshMine(); });
 	// Eerste kaarten in rusttijd voorbereiden (aanpassen, iconen, tekenen): Templates openen toonde anders eerst grijze vlakken.
@@ -1054,13 +1057,23 @@ function buildTemplates(root) {
 
 // Alleen na opslaan/verwijderen bijwerken (handtekening-diff), nooit per refresh. Kaarten per name@updated hergebruiken:
 // alleen nieuwe bouwen, weggevallen weghalen (een herbouw liet elke thumb even leeg flitsen).
+let onlineTemplates = [], onlineLoading = false, onlineLoaded = 0;
+async function refreshOnline(force = false) {
+	if (onlineLoading || (!force && Date.now() - onlineLoaded < 60000)) return;
+	onlineLoading = true;
+	try { onlineTemplates = await fetchTemplates(); onlineLoaded = Date.now(); refreshMine(); }
+	catch (e) { toast(e.message, 'err'); }
+	finally { onlineLoading = false; }
+}
 function refreshMine() {
 	if (!mine) return;
-	const list = userTemplates.list(), sig = list.map(t => t.name + '@' + t.updated).join('|');
+	const combined = new Map(onlineTemplates.map(t => [t.name, t]));
+	for (const t of userTemplates.list()) if (!combined.has(t.name) || t.updated > combined.get(t.name).updated) combined.set(t.name, t);
+	const list = [...combined.values()].sort((a,b) => a.name.localeCompare(b.name, 'nl')), sig = list.map(t => t.name + '@' + t.updated + (t.cloudUrl || '')).join('|');
 	if (sig === mine.sig) return;
 	mine.sig = sig;
 	const old = new Map(mine.cards.map(c => [c.key, c]));
-	mine.cards = list.map(t => { const k = t.name + '@' + t.updated, c = old.get(k); old.delete(k); return c || mineCard(t, k); });
+	mine.cards = list.map(t => { const k = t.name + '@' + t.updated + (t.cloudUrl || ''), c = old.get(k); old.delete(k); return c || mineCard(t, k); });
 	for (const c of old.values()) { dropThumb(c.th); c.el.remove(); }
 	// Alleen verplaatsen wat niet al op zijn plek staat: verplaatsen haalt een knop even uit de DOM (focus weg).
 	mine.cards.forEach((c, i) => { if (mine.grid.children[i] !== c.el) mine.grid.insertBefore(c.el, mine.grid.children[i] || null); });
@@ -1069,7 +1082,7 @@ function refreshMine() {
 function mineCard(t, key) {
 	const src = { id: 'mine:' + key, doc: t.doc };
 	const { btn, t: th } = thumbButton({ px: 220, doc: () => tplThumbDoc(src, th), sig: labelSig, title: t.name, cls: 'tpl-card', onclick: () => loadTemplate(t.name, t.doc, true) });
-	btn.append(h('span', { class: 'tpl-meta' }, h('span', { class: 'tpl-name' }, t.name), h('span', { class: 'tpl-size' }, sizeName(t.doc.label))));
+	btn.append(h('span', { class: 'tpl-meta' }, h('span', { class: 'tpl-name' }, t.name + (t.cloudUrl ? ' · Online' : '')), h('span', { class: 'tpl-size' }, sizeName(t.doc.label))));
 	const del = ib('trash', `Template "${t.name}" verwijderen`, async ev => {
 		ev.stopPropagation();
 		if (!await ask('Template verwijderen?', `"${t.name}" wordt definitief uit je browser verwijderd.`, 'Verwijderen', true)) return;
@@ -1077,7 +1090,8 @@ function mineCard(t, key) {
 		userTemplates.remove(t.name); refreshMine(); toast('Template verwijderd');
 		(mine.cards[i] || mine.cards.at(-1))?.btn.focus();   // de knop met focus is weg: naar de buurkaart
 	}, 'tpl-del');
-	const c = { key, th, btn, el: h('div', { class: 'tpl-wrap' }, btn, del), name: fold(t.name) };
+	const manage = t.cloudUrl ? h('a', { class:'btn sm', href:t.cloudUrl, target:'_blank', rel:'noopener noreferrer', title:'Openbare template op GitHub beheren; sluiten verwijdert hem uit de site' }, 'GitHub') : del;
+	const c = { key, th, btn, el: h('div', { class: 'tpl-wrap' }, btn, manage), name: fold(t.name) };
 	return c;
 }
 
@@ -2479,6 +2493,7 @@ function ask(title, msg, okText = 'OK', danger = false) {
 }
 function buildDialogs() {
 	const inp = $('saveName'), hint = $('saveHint');
+	inp.addEventListener('input', () => { $('savePayload').hidden = true; });
 	inp.addEventListener('input', () => setText(hint, saveNames.includes(inp.value.trim()) ? 'Deze naam bestaat al en wordt overschreven.' : ''));
 	$('saveForm').addEventListener('submit', e => {
 		const n = inp.value.trim();
@@ -2486,6 +2501,18 @@ function buildDialogs() {
 		if (!userTemplates.save(n, app.doc)) { e.preventDefault(); setText(hint, 'Opslaan mislukt (opslag vol of ongeldige naam). Kies een andere naam of exporteer.'); return; }
 		setDocName(n); refreshMine(); toast(`Opgeslagen als template "${n}"`, 'ok');
 	});
+	$('saveOnline').onclick = async () => {
+		try {
+			const p = publication(inp.value, app.doc);
+			window.open(p.url, '_blank', 'noopener,noreferrer');
+			if (p.paste) {
+				const payload = $('savePayload'); payload.hidden = false; payload.value = p.body; payload.select();
+				try { await navigator.clipboard.writeText(p.body); setText(hint, 'Template gekopieerd. Plak hem op GitHub in het grote tekstvak en klik Create.'); }
+				catch { setText(hint, 'Kopieer de geselecteerde templategegevens hieronder en plak ze in het grote tekstvak op GitHub. Klik daarna Create.'); }
+			}
+			if (!p.paste) setText(hint, 'Bevestig op GitHub met Create. Daarna staat de template onder Mijn templates → Online vernieuwen.');
+		} catch (e) { setText(hint, e.message); }
+	};
 	$('saveCancel').onclick = () => $('dlgSave').close();
 	$('askCancel').onclick = () => $('dlgAsk').close('');
 	$('helpClose').onclick = () => $('dlgHelp').close();

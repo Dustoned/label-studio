@@ -126,7 +126,8 @@
 		<label class="fld"><span>Naam</span><input id="saveName" type="text" list="saveList" autocomplete="off" maxlength="60" placeholder="bv. Prijskaartje winkel"></label>
 		<datalist id="saveList"></datalist>
 		<p id="saveHint" class="hint" aria-live="polite"></p>
-		<div class="dlg-actions"><button type="button" class="btn" id="saveCancel">Annuleren</button><button class="btn primary" value="ok">Opslaan</button></div>
+		<textarea id="savePayload" hidden readonly aria-label="Templategegevens om op GitHub te plakken"></textarea>
+		<div class="dlg-actions"><button type="button" class="btn" id="saveCancel">Annuleren</button><button type="button" class="btn primary" id="saveOnline">Openbaar opslaan via GitHub</button><button class="btn" value="ok">Alleen dit apparaat</button></div>
 	</form>
 </dialog>
 
