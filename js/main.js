@@ -68,7 +68,7 @@ let printBusy = false;
 // d = vaste kopie: bewerken tijdens een lange batch kwam anders half in de batch, langs de controle vooraf.
 async function print(onlyRow = false) {
 	if (printBusy || printer.isBusy()) return;
-	const d = printer.preparePrintDoc(structuredClone(app.doc)), all = rows(), list = onlyRow || !all.length ? [previewRow()] : all;
+	const d = structuredClone(app.doc), all = rows(), list = onlyRow || !all.length ? [previewRow()] : all;
 	const copies = clamp(Math.round(+d.print.copies) || 1, 1, 99), total = list.length * copies;
 	const start = +d.counter.start || 0, step = Number.isFinite(+d.counter.step) ? +d.counter.step : 1, now = new Date();
 	const cv = document.createElement('canvas'), ctxOf = i => ({ row: list[Math.floor(i / copies)] || null, counter: start + i * step, now });
