@@ -553,6 +553,39 @@ function tidyDoc(D, ext) {
 	// Na het schalen opnieuw meten: krimpen/vullen op hele dots schaalt de inhoud niet lineair (gemeten 0,5 mm uit het midden).
 	if (ink.size) shiftTo(list, A, 'both', e => (fixedText(e) && seen(e, ext)) || aabb(e), P);
 }
+// Presetrijen houden hun vakmaten; lege gaten sluiten zonder tekst of iconen op te rekken.
+function reflowPreset(D) {
+	const list = D.elements.filter(e => e.type !== 'border' && shownEl(e));
+	// Vrij geplaatste rotaties en vergrendelde inhoud zijn geen automatisch te verplaatsen raster.
+	if (!list.length || list.some(e => e.locked || e.rot)) return;
+	const groups = (items, axis, size) => {
+		const out = [];
+		for (const e of [...items].sort((a, b) => a[axis] - b[axis])) {
+			let row = out.at(-1);
+			if (!row || e[axis] > row.end + 0.01) out.push(row = { items: [], start: e[axis], end: e[axis] + e[size] });
+			row.items.push(e); row.end = Math.max(row.end, e[axis] + e[size]);
+		}
+		return out;
+	};
+	const A = innerArea(D), rows = groups(list, 'y', 'h');
+	for (const row of rows) {
+		const cols = groups(row.items, 'x', 'w');
+		const gap = Math.min(1.5, ...cols.slice(1).map((c, i) => c.start - cols[i].end));
+		const width = cols.reduce((n, c) => n + c.end - c.start, 0) + (cols.length - 1) * (Number.isFinite(gap) ? gap : 0);
+		let x = A.x + (A.w - width) / 2;
+		for (const col of cols) {
+			for (const e of col.items) e.x = r3(e.x + x - col.start);
+			x += col.end - col.start + gap;
+		}
+	}
+	const gap = Math.min(1.5, ...rows.slice(1).map((r, i) => r.start - rows[i].end));
+	const height = rows.reduce((n, r) => n + r.end - r.start, 0) + (rows.length - 1) * (Number.isFinite(gap) ? gap : 0);
+	let y = A.y + (A.h - height) / 2;
+	for (const row of rows) {
+		for (const e of row.items) e.y = r3(e.y + y - row.start);
+		y += row.end - row.start + gap;
+	}
+}
 // Verschil binnen TIDY_EPS (mm) = al netjes.
 const TIDY_EPS = 1 / DPM, close = (a, b) => Object.keys(a).every(k => typeof a[k] === 'number' ? Math.abs(a[k] - b[k]) <= TIDY_EPS : a[k] === b[k] || JSON.stringify(a[k]) === JSON.stringify(b[k]));
 
@@ -693,6 +726,7 @@ function makeStore(persist = true) {
 			const set = idSet(x), E = s.doc.elements, n = E.length;
 			E.splice(0, n, ...E.filter(e => !set.has(e.id) || e.locked));
 			if (E.length === n) return;
+			if (s.doc.fields.length) reflowPreset(s.doc);
 			prune();
 			s.changed();
 		},
@@ -824,6 +858,7 @@ function makeStore(persist = true) {
 			if (JSON.stringify(s.doc) === tidied) return;
 			mutate(D => {
 				const before = dup(D.elements);
+				if (D.fields.length) reflowPreset(D);
 				// Meten en schalen tot het vast staat: na het schalen meet render net anders (hele dots, afbrekende tekst breekt
 				// in het strakke vak anders), dan deed pas de volgende klik de rest. Hooguit 6 rondes, mocht het heen en weer gaan.
 				for (let i = 0, prev = before; i < 6; i++) { tidyDoc(D, extentFn); if (D.elements.every((e, j) => close(e, prev[j]))) break; prev = dup(D.elements); }
@@ -937,7 +972,7 @@ function makeStore(persist = true) {
 			return f;
 		},
 		// De prullenbak verwijdert ook de gekoppelde tekst/code/keuzegroep; opheffen blijft een aparte actie.
-		deleteField(key, parts = []) {
+		deleteField(key, parts = [], links = []) {
 			const i = s.doc.fields.findIndex(f => f.key === key);
 			if (i < 0) return false;
 			const linked = el => [el.text, el.data].some(v => [...String(v ?? '').matchAll(/\{([^{}|]+)(?:\|[^{}]*)?\}/g)]
@@ -945,8 +980,13 @@ function makeStore(persist = true) {
 			const extra = new Set(parts);
 			const targets = new Set(s.doc.elements.filter(el => linked(el) || extra.has(el.id)));
 			if ([...targets].some(el => el.locked)) return false;
+			for (const link of links) {
+				const el = s.doc.elements.find(e => e.id === link.id);
+				if (el && !el.locked && !el.rules.length) el.rules = dup(link.rules);
+			}
 			s.doc.elements = s.doc.elements.filter(el => !targets.has(el));
 			s.doc.fields.splice(i, 1);
+			reflowPreset(s.doc);
 			prune();
 			s.changed();
 			return true;
@@ -1644,6 +1684,19 @@ export async function selftest() {
 	ok('deleteField herstelt veld en label samen met één undo', J(f.doc) === beforeDeleteField && !f.canUndo());
 	FG('D').locked = true;
 	ok('deleteField beschermt vergrendelde onderdelen zonder gedeeltelijke wijziging', !f.deleteField('verpakt', ['H']) && !!fv('verpakt') && f.doc.elements.length === 5);
+	const compact = { label: { w:40, h:30 }, print: {}, elements: [
+		{ id:'a', type:'text', x:3, y:16, w:10, h:3 }, { id:'b', type:'text', x:3, y:19, w:10, h:5 },
+		{ id:'c', type:'text', x:27, y:16, w:10, h:3 }, { id:'d', type:'text', x:27, y:19, w:10, h:5 },
+	] };
+	reflowPreset(compact);
+	ok('preset: lege middenkolom sluit, kop en waarde blijven samen en groep staat midden',
+		compact.elements[0].x === compact.elements[1].x && compact.elements[2].x === compact.elements[3].x
+		&& Math.abs(compact.elements[0].x + compact.elements[2].x + 10 - 40) < .01
+		&& compact.elements[2].x - compact.elements[0].x === 11.5);
+	const compactOnce = J(compact); reflowPreset(compact);
+	ok('preset: herverdelen is stabiel', J(compact) === compactOnce);
+	compact.elements[0].locked = true; const lockedCompact = J(compact); reflowPreset(compact);
+	ok('preset: vergrendelde inhoud blijft beschermd', J(compact) === lockedCompact);
 	f.replace({ v:2, label:{ w:40, h:30 }, fields:[{ key:'naam', type:'text', value:'A' }, { key:'soort', type:'choice', options:['Indica', 'Sativa'], value:'Indica' },
 		{ key:'bio', type:'toggle', value:false }, { key:'tht', type:'date', value:'', offset:3 }, { key:'thc', type:'number', value:'20' }], elements:[{ type:'text', id:'N', text:'{naam}' }] }, { history:false });
 	f.setField('naam', 'Am'); f.setField('naam', 'Amnesia'); f.setField('soort', 'Sativa'); f.setField('bio', true); f.setField('thc', 22);

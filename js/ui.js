@@ -705,16 +705,23 @@ const fieldOf = key => app.doc.fields.find(f => f.key === key);
 // Eerste {token} van de tekst dat een invulveld is (Maak invulveld/opheffen, dubbelklik naar Invullen).
 const fieldKey = e => { const keys = new Set(app.doc.fields.map(f => f.key)); return tokenKeys(e?.text).find(k => keys.has(k)) || null; };
 // Oude labels missen nieuwe veldkoppelingen. Alleen exact herkenbare templateonderdelen meenemen, nooit op nabijheid gokken.
+function templateFieldLinks(doc) {
+	const template = TEMPLATES.find(t => t.name === doc.name);
+	if (!template) return [];
+	const ref = adaptTemplate(template.doc, doc.label, { print: doc.print });
+	const signature = el => JSON.stringify(Object.entries(el).filter(([k]) => !['id', 'name', 'rules', 'nodes', 'svg'].includes(k)).sort(([a], [b]) => a.localeCompare(b)));
+	return doc.elements.flatMap(e => {
+		const match = ref.elements.find(r => r.rules.length && signature(r) === signature(e));
+		return match ? [{ id:e.id, rules:match.rules }] : [];
+	});
+}
 function templateFieldParts(doc, keys = null) {
 	const template = TEMPLATES.find(t => t.name === doc.name);
 	if (!template) return [];
 	const fields = new Set(keys || (template.doc.fields || []).filter(f => !doc.fields.some(x => x.key === f.key)).map(f => f.key));
-	if (!fields.size) return [];
-	const ref = adaptTemplate(template.doc, doc.label, { print: doc.print });
-	const signature = el => JSON.stringify(Object.entries(el).filter(([k]) => !['id', 'name', 'rules', 'nodes', 'svg'].includes(k)).sort(([a], [b]) => a.localeCompare(b)));
-	const parts = new Set(ref.elements.filter(e => e.rules.some(r => fields.has(r.field))).map(signature));
-	return doc.elements.filter(e => parts.has(signature(e))).map(e => e.id);
+	return templateFieldLinks(doc).filter(e => e.rules.some(r => fields.has(r.field))).map(e => e.id);
 }
+
 function buildFill(root) {
 	const list = h('div', { class: 'ff-list', title: 'Enter = volgende veld' });
 	const empty = h('div', { class: 'ff-empty' }, ic('form', 28), h('strong', {}, 'Nog geen invulvelden'),
@@ -758,7 +765,7 @@ function focusField(key) { const r = fillUI?.rows.get(key); if (r) focusRow(r); 
 function fieldRow(f) {
 	const key = f.key, lab = h('span', { class: 'ff-label' }), csv = h('span', { class: 'ff-csv', hidden: true });
 	const del = ib('trash', 'Invulveld verwijderen', () => {
-		if (!app.deleteField(key, templateFieldParts(app.doc, [key]))) { toast('Ontgrendel eerst de gekoppelde labelelementen.', 'err'); return; }
+		if (!app.deleteField(key, templateFieldParts(app.doc, [key]), templateFieldLinks(app.doc))) { toast('Ontgrendel eerst de gekoppelde labelelementen.', 'err'); return; }
 		toast('Invulveld en gekoppelde labelelementen verwijderd. Ctrl+Z zet ze terug.');
 	}, 'sm ff-del');
 	// Geen tab-stop: Tab+Enter vanuit een veld wiste anders het volgende veld.

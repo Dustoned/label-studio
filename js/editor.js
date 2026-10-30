@@ -26,6 +26,10 @@ export const typing = t => !!t && (t.isContentEditable || t.tagName === 'TEXTARE
 const ownArrows = t => !!t && /^(INPUT|SELECT)$/.test(t.tagName);
 
 // ---------- pure helpers (node-testbaar) ----------
+function gestureFrame([a, b]) {
+	return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, d: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)) };
+}
+
 // Met de klok mee in schermcoordinaten (y omlaag), zoals ctx.rotate.
 function rotatePoint(px, py, cx, cy, deg) {
 	const a = deg * RAD, c = Math.cos(a), s = Math.sin(a), dx = px - cx, dy = py - cy;
@@ -212,6 +216,9 @@ export function selftest() {
 	t('frame schaal uit CSS-rect (24 px/mm)', near(f.ppm, 24) && near(f.x1, 40) && near(f.y1, 30) && near(f.x0, 0));
 	const m = toMM({ clientX: 580, clientY: 410 }, f);
 	t('muis naar mm onafhankelijk van canvasresolutie', near(m.x, 20) && near(m.y, 15));
+	const pinchTest = gestureFrame([{ x:10, y:20 }, { x:30, y:20 }]);
+	t('twee vingers: midden en afstand, samenvallende vingers blijven eindig', pinchTest.x === 20 && pinchTest.y === 20 && pinchTest.d === 20
+		&& gestureFrame([{ x:1, y:1 }, { x:1, y:1 }]).d === 1);
 	return { ok, details };
 }
 
@@ -221,6 +228,45 @@ export function createEditor({ view, overlay, app, getBoxes, onEditText, onConte
 	const ctx = overlay.getContext('2d');
 	let zoom = 2, autoFit = true, W = 0, H = 0, g = null, hover = null, guides = [], last = null, raf = 0, nudge = null;
 	overlay.style.touchAction = 'none';
+
+	const touches = new Map();
+	let pinch = null;
+	const touchFrame = () => gestureFrame([...touches.values()]);
+	function touchDown(e) {
+		if (e.pointerType !== 'touch') return;
+		touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+		if (touches.size >= 2) host.setPointerCapture(e.pointerId);
+		if (touches.size < 2) return;
+		// Een begonnen objectsleep terugzetten zodra het een zoomgebaar wordt.
+		if (g?.kind === 'move') for (const [el, x, y] of g.start) Object.assign(el, { x, y });
+		else if (g?.el) Object.assign(g.el, g.b0);
+		g = null; guides = []; app.changed({ history: false });
+		pinch = touchFrame(); autoFit = false;
+		e.preventDefault(); e.stopPropagation();
+	}
+	function touchMove(e) {
+		if (!touches.has(e.pointerId)) return;
+		touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+		if (!pinch) return;
+		e.preventDefault(); e.stopPropagation();
+		if (touches.size < 2) return;
+		const next = touchFrame();
+		applyZoom(zoom * next.d / pinch.d, pinch.x, pinch.y);
+		host.scrollLeft += pinch.x - next.x; host.scrollTop += pinch.y - next.y;
+		pinch = next;
+	}
+	function touchUp(e) {
+		touches.delete(e.pointerId);
+		if (!pinch) return;
+		e.preventDefault(); e.stopPropagation();
+		if (!touches.size) pinch = null;
+		else if (touches.size >= 2) pinch = touchFrame();
+	}
+	host.style.touchAction = 'none';
+	host.addEventListener('pointerdown', touchDown, true);
+	host.addEventListener('pointermove', touchMove, true);
+	host.addEventListener('pointerup', touchUp, true);
+	host.addEventListener('pointercancel', touchUp, true);
 
 	const els = () => app.doc.elements;
 	const byId = id => els().find(e => e.id === id);
