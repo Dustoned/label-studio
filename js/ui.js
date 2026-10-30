@@ -1537,8 +1537,9 @@ function buildLayers(root) {
 function layerRow(id) {
 	const name = h('span', { class: 'ly-name' }), sub = h('span', { class: 'ly-sub' }), tic = h('span', { class: 'ly-ic' });
 	const eye = h('button', { type: 'button', class: 'btn ghost ib sm ly-btn' }), lock = h('button', { type: 'button', class: 'btn ghost ib sm ly-btn' });
+	const del = h('button', { type: 'button', class: 'btn ghost ib sm ly-btn ly-delete', onclick: () => app.remove([id]) }, ic('trash', 16));
 	const row = h('div', { class: 'layer', draggable: true, role: 'option', tabIndex: 0, 'aria-selected': 'false' },
-		h('span', { class: 'ly-grip', 'aria-hidden': 'true' }, ic('grip', 14)), tic, h('span', { class: 'ly-txt' }, name, sub), eye, lock);
+		h('span', { class: 'ly-grip', 'aria-hidden': 'true' }, ic('grip', 14)), tic, h('span', { class: 'ly-txt' }, name, sub), eye, lock, del);
 	// Klik selecteert en houdt Lagen open (Shift-klik, oog en slot blijven bruikbaar); dubbelklik of Enter = Bewerken.
 	row.addEventListener('click', e => {
 		if (e.target.closest('.ly-btn')) return;
@@ -1570,7 +1571,7 @@ function layerRow(id) {
 		const to = dropIndex(app.doc.elements.map(x => x.id), from, id, row._above);
 		if (to >= 0) app.reorder(from, to);
 	});
-	const r = { row, name, sub, tic, eye, lock, t: '', hid: null, lck: null };
+	const r = { row, name, sub, tic, eye, lock, del, t: '', hid: null, lck: null };
 	layerRows.set(id, r);
 	return r;
 }
@@ -1607,6 +1608,9 @@ function refreshLayers(list, empty) {
 		r.row.classList.toggle('is-hidden', hid);
 		if (r.hid !== hid || r.tip !== tip) { r.hid = hid; r.tip = tip; r.eye.replaceChildren(ic(hid ? 'eyeOff' : 'eye', 16)); r.eye.title = tip || (hid ? 'Tonen' : 'Verbergen'); r.eye.disabled = !!tip; r.eye.setAttribute('aria-label', r.eye.title); r.eye.setAttribute('aria-pressed', String(hid)); }
 		if (r.lck !== !!e.locked) { r.lck = !!e.locked; r.lock.replaceChildren(ic(e.locked ? 'lock' : 'unlock', 16)); r.lock.title = e.locked ? 'Ontgrendelen' : 'Vergrendelen'; r.lock.setAttribute('aria-label', r.lock.title); r.lock.setAttribute('aria-pressed', String(r.lck)); }
+		r.del.disabled = !!e.locked;
+		r.del.title = e.locked ? 'Ontgrendel deze laag om te verwijderen' : 'Laag verwijderen';
+		r.del.setAttribute('aria-label', r.del.title);
 	}
 	if (fi >= 0 && !list.contains(document.activeElement)) list.children[Math.min(fi, list.children.length - 1)]?.focus();
 	empty.hidden = els.length > 0;

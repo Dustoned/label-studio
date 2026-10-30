@@ -351,7 +351,7 @@ input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: var(--ring);
 
 /* Lagen */
 .layers { display: grid; gap: 2px; margin-bottom: 8px; }
-.layer { display: grid; grid-template-columns: 14px 20px minmax(0, 1fr) 28px 28px; align-items: center; gap: 6px; min-height: 40px; padding: 4px 4px 4px 6px; border-radius: var(--r-sm); cursor: pointer; color: var(--text-2); border: 1px solid transparent; }
+.layer { display: grid; grid-template-columns: 14px 20px minmax(0, 1fr) repeat(3, 28px); align-items: center; gap: 6px; min-height: 40px; padding: 4px 4px 4px 6px; border-radius: var(--r-sm); cursor: pointer; color: var(--text-2); border: 1px solid transparent; }
 .layer:hover { background: var(--hover); }
 .layer.sel { background: var(--accent-soft); color: var(--text); }
 .layer.dragging { opacity: .45; }
@@ -672,6 +672,7 @@ textarea.ff-in { height: auto !important; min-height: 40px; padding: 9px 10px; r
 	.minibar { max-width: calc(100vw - 16px); overflow-x: auto; }
 }
 @media (max-width: 900px) and (pointer: coarse), (max-width: 559px) {
+	.layer { grid-template-columns: 14px 20px minmax(0, 1fr) repeat(3, 44px); gap: 2px; }
 	body { height: 100dvh; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
 	.btn, .btn.sm, .btn.ib, .btn.ib.sm, .btn.print, .copies input,
 	.pre, .seg > button, .chip, .pill, .roll-pick, .ff-photo, .mi { min-height: 44px; }
