@@ -2,16 +2,18 @@
 // UUIDs/commandopdeling: https://github.com/mkuhlmann/pyphomemo/blob/main/src/pyphomemo/printer.py
 // shortcut: M110-profiel; Q450E/firmware 2.4.4 vereist nog een echte iPhone/printer-proef.
 import { encodeRaster, buildJob } from './printer.js';
-import { DPM, hex, sleep } from './util.js';
+import { DPM, hex, sleep, load, store } from './util.js';
 
 const uuid = n => `0000${n}-0000-1000-8000-00805f9b34fb`;
 const SERVICE = uuid('ff00'), WRITE = uuid('ff02'), NOTIFY = uuid('ff03');
 
 export function createBlePrinter({ getBluetooth = () => globalThis.navigator?.bluetooth,
-	pause = sleep, now = () => performance.now(), timeout = 15000 } = {}) {
+	pause = sleep, now = () => performance.now(), timeout = 15000,
+	memory = { read: () => null, write() {} } } = {}) {
 	let cb = { onStatus() {}, onLog() {}, onConnection() {} };
 	let device = null, writer = null, notify = null, pending = false, busy = false;
 	let chunkSize = 20;
+	let remembered = null, restoring = false, suspended = false, generation = 0;
 	let tail = [], reply = null;
 	const status = (text, cls = '') => cb.onStatus(text, cls);
 	const isConnected = () => !!writer && !!device?.gatt?.connected;
@@ -27,7 +29,7 @@ export function createBlePrinter({ getBluetooth = () => globalThis.navigator?.bl
 		device = writer = notify = null;
 		chunkSize = 20;
 		tail = [];
-		try { old?.gatt?.disconnect(); } catch { /* Reeds verbroken. */ }
+		try { Promise.resolve(old?.gatt?.disconnect()).catch(() => {}); } catch { /* Reeds verbroken. */ }
 		cb.onConnection(false);
 	}
 	function disconnected() {
@@ -48,29 +50,33 @@ export function createBlePrinter({ getBluetooth = () => globalThis.navigator?.bl
 		if (rejected) reply?.finish(new Error('Printer weigert het label (1a 0b b8). BLE-compatibiliteit niet bevestigd.'));
 		else if (accepted && reply?.armed) reply.finish();
 	}
-	async function connect(pick = false) {
+	async function connect(pick = false, choose = false) {
+		if (suspended || pending || busy || (pick && restoring)) return false;
+		if (choose) { clearConnection(); remembered = null; }
 		if (isConnected()) return true;
-		if (!pick || pending || busy) return false;
+		if (!pick && !remembered) return false;
 		const bluetooth = getBluetooth();
 		if (!bluetooth?.requestDevice) {
 			status('Web Bluetooth ontbreekt. Activeer Beacio in Safari en probeer opnieuw.', 'err');
 			return false;
 		}
 		pending = true;
+		const epoch = generation;
 		let selected = null, expired = false;
 		try {
 			// Geen await vóór de picker: Safari moet de knopklik nog als gebruikersgebaar zien.
-			const selection = bluetooth.requestDevice({ filters: [
+			const selection = remembered || bluetooth.requestDevice({ filters: [
 				{ services: [SERVICE] }, { namePrefix: 'Q450' }, { namePrefix: 'M110' }, { namePrefix: 'Phomemo' }
 			], optionalServices: [SERVICE] });
-			status('Kies je BLE-labelprinter…');
+			status(remembered ? 'Opnieuw verbinden met je printer…' : 'Kies je BLE-labelprinter…');
 			// De gebruiker bepaalt de scantijd; alleen GATT-operaties krijgen een timeout.
 			selected = await selection;
+			if (suspended || epoch !== generation) return false;
 			device = selected;
 			device.addEventListener('gattserverdisconnected', disconnected);
-			const connection = device.gatt.connect();
+			const connection = device.gatt.connected ? device.gatt : device.gatt.connect();
 			// Een laat geslaagde GATT-connectie na timeout mag niet blijven hangen.
-			Promise.resolve(connection).then(() => { if (expired) selected.gatt.disconnect(); }, () => {});
+			Promise.resolve(connection).then(() => { if (expired || suspended || epoch !== generation) selected.gatt.disconnect(); }, () => {});
 			const server = await limit(connection, 'Bluetooth verbinden');
 			const service = await limit(server.getPrimaryService(SERVICE), 'BLE-service FF00');
 			const chars = await limit(service.getCharacteristics(), 'BLE-kenmerken');
@@ -93,8 +99,10 @@ export function createBlePrinter({ getBluetooth = () => globalThis.navigator?.bl
 				const payload = Number.isInteger(size) && size > 0 ? size : (Number.isInteger(mtu) && mtu > 3 ? mtu - 3 : 20);
 				if (Number.isInteger(payload) && payload >= 20) chunkSize = Math.min(128, payload);
 			} catch { /* Optionele metadata; geen grotere pakketten gokken. */ }
-			if (!device?.gatt.connected) throw new Error('Bluetooth-verbinding verbroken.');
+			if (suspended || epoch !== generation || !device?.gatt.connected) throw new Error('Bluetooth-verbinding verbroken.');
 			writer = write;
+			remembered = selected;
+			try { if (selected.id) memory.write(selected.id); } catch { /* Opslag is optioneel. */ }
 			cb.onLog(`BLE verzenden: ${chunkSize} bytes per pakket, minimaal 200 ms tussen writes.`);
 			cb.onConnection(true);
 			status('BLE verbonden · printondersteuning nog te bevestigen');
@@ -102,10 +110,28 @@ export function createBlePrinter({ getBluetooth = () => globalThis.navigator?.bl
 		} catch (e) {
 			expired = true;
 			clearConnection();
-			status(e.name === 'NotFoundError' ? 'Geen BLE-printer gekozen of geschikt profiel gevonden.' : e.message, 'err');
+			if (!suspended) status(e.name === 'NotFoundError' ? 'Geen BLE-printer gekozen of geschikt profiel gevonden.' : e.message, 'err');
 			return false;
 		} finally { pending = false; }
 	}
+	async function restore() {
+		if (suspended || restoring || pending || busy || isConnected()) return false;
+		restoring = true;
+		const epoch = generation;
+		try {
+			if (!remembered) {
+				const id = memory.read(), bluetooth = getBluetooth();
+				if (!id || !bluetooth?.getDevices) return false;
+				const devices = await limit(bluetooth.getDevices(), 'Bekende printer ophalen');
+				if (suspended || epoch !== generation || pending) return false;
+				remembered = devices.find(d => d.id === id) || null;
+			}
+			return await connect(false);
+		} catch (e) { cb.onLog(`Printer herstellen: ${e.message}`); return false; }
+		finally { restoring = false; }
+	}
+	function release() { suspended = true; generation++; clearConnection(); }
+	function resume() { suspended = false; return restore(); }
 	function waitForReply() {
 		// shortcut: ACK heeft geen opdracht-id; een sterk vertraagde ACK blijft ambigu.
 		// Na fouten verbreken we daarom de verbinding; bevestig dit gedrag met echte hardware.
@@ -179,16 +205,16 @@ export function createBlePrinter({ getBluetooth = () => globalThis.navigator?.bl
 		return printed;
 	}
 	return { initPrinter(callbacks = {}) { cb = { ...cb, ...callbacks }; },
-		isConnected, isBusy: () => busy || pending, connect, printLabels };
+		isConnected, isBusy: () => busy || pending || restoring, connect, printLabels, restore, release, resume };
 }
 
-const printer = createBlePrinter();
-export const { initPrinter, isConnected, isBusy, connect, printLabels } = printer;
+const printer = createBlePrinter({ memory: { read: () => load('labelstudio.ble.device'), write: id => store('labelstudio.ble.device', id) } });
+export const { initPrinter, isConnected, isBusy, connect, printLabels, restore, release, resume } = printer;
 
 export async function selftest() {
 	const details = [];
 	const assert = (yes, text) => { if (!yes) throw new Error(text); details.push(text); };
-	function mock(mode = 'ack') {
+	function mock(mode = 'ack', memory = { read: () => null, write() {} }) {
 		const listeners = new Map(), writes = [];
 		let clock = 0;
 		const times = [], sizes = [];
@@ -216,20 +242,48 @@ export async function selftest() {
 			mode = 'ack';
 		}
 		const service = { async getCharacteristics() { return mode === 'unknown' ? [notification] : [writable, notification]; } };
-		const device = { addEventListener(n, f) { listeners.set(n, f); }, removeEventListener(n) { listeners.delete(n); },
-			gatt: { connected: false, async connect() { this.connected = true; return this; },
-				async getPrimaryService(id) { if (id !== SERVICE) throw new Error('UUID'); return service; },
+		let connections = 0, discoveries = 0;
+		const device = { id: 'test-printer', addEventListener(n, f) { listeners.set(n, f); }, removeEventListener(n) { listeners.delete(n); },
+			gatt: { connected: false, async connect() { connections++; this.connected = true; return this; },
+				async getPrimaryService(id) { discoveries++; if (id !== SERVICE) throw new Error('UUID'); return service; },
 				disconnect() { this.connected = false; } } };
 		let picks = 0;
 		if (mode === 'mtu') device.gatt.getWriteLimits = async () => ({ withoutResponse: 182 });
 		if (mode === 'mtu-only') device.gatt.getMtu = async () => 185;
-		const bluetooth = { requestDevice() { picks++; return Promise.resolve(device); } };
-		const p = createBlePrinter({ getBluetooth: () => bluetooth, pause: async ms => { clock += ms; }, now: () => clock, timeout: 20 });
-		return { p, writes, bluetooth, times, sizes, setMode(value) { mode = value; }, get picks() { return picks; } };
+		const bluetooth = { requestDevice() { picks++; return Promise.resolve(device); }, async getDevices() { return [device]; } };
+		const p = createBlePrinter({ getBluetooth: () => bluetooth, pause: async ms => { clock += ms; }, now: () => clock, timeout: 20, memory });
+		return { p, writes, bluetooth, times, sizes, device, listeners, setMode(value) { mode = value; },
+			get picks() { return picks; }, get connections() { return connections; }, get discoveries() { return discoveries; } };
 	}
 	const print = { speed: 5, density: 10, media: 10, offset: 0 };
 	const frame = { W: 8, H: 1, rgba: new Uint8Array(32) };
 	try {
+		let stored = null;
+		const memory = { read: () => stored, write: id => { stored = id; } };
+		const first = mock('ack', memory);
+		assert(!await first.p.restore() && first.picks === 0, 'eerste bezoek opent nooit automatisch apparaatkeuze');
+		await first.p.connect(true);
+		assert(stored === 'test-printer', 'succesvol gekozen printer-id wordt onthouden');
+		first.p.release();
+		assert(!first.p.isConnected() && !first.device.gatt.connected && !first.listeners.size, 'pagina verlaten geeft verbinding en listeners vrij');
+		const reload = mock('ack', memory);
+		reload.device.gatt.connected = true;
+		assert(await reload.p.restore() && reload.picks === 0 && reload.connections === 0 && reload.discoveries === 1,
+			'refresh herstelt bekende actieve GATT zonder picker of dubbele connect');
+		reload.device.gatt.connected = false; reload.listeners.get('gattserverdisconnected')();
+		assert(await reload.p.connect(true) && reload.picks === 0 && reload.discoveries === 2, 'echte disconnect: dezelfde printer opnieuw verbinden met verse kenmerken');
+		reload.p.release();
+		assert(await reload.p.resume() && reload.picks === 0, 'terug naar pagina herstelt printer zonder kiezer');
+		assert(await reload.p.connect(true, true) && reload.picks === 1, 'andere printer kiezen blijft expliciet beschikbaar');
+		stored = 'ander-apparaat';
+		const missing = mock('ack', memory);
+		assert(!await missing.p.restore() && missing.picks === 0 && missing.connections === 0, 'geen toestemming voor opgeslagen id: geen willekeurige andere printer');
+		stored = 'test-printer';
+		const racing = mock('ack', memory);
+		let found;
+		racing.bluetooth.getDevices = () => new Promise(resolve => { found = resolve; });
+		const restoring = racing.p.restore(); racing.p.release(); found([racing.device]);
+		assert(!await restoring && !racing.p.isConnected() && racing.connections === 0, 'pagina verlaten tijdens lookup voorkomt late verbinding');
 		const m = mock();
 		m.p.initPrinter();
 		assert(m.picks === 0 && !await m.p.connect(false), 'init/passief verbinden opent geen picker');

@@ -137,7 +137,7 @@ function start() {
 	editor = editorMod.createEditor({ view: $('view'), overlay: $('overlay'), app, getBoxes: () => boxes, stage: $('stageScroll'),
 		onEditText: ui.editText, onContextMenu: ui.contextMenu,
 		onZoom: z => { ui.zoomChanged(z); if (viewScale() !== lastScale) schedule(true); } });
-	const actions = { print, rows, previewRow, connect: () => printer.connect(true), redraw: schedule, inline: null };
+	const actions = { print, rows, previewRow, connect: choose => printer.connect(true, choose), redraw: schedule, inline: null };
 	ui.build({ editor, actions });
 	// Mini-werkbalk is los geladen: ontbreekt of faalt de module, dan werkt de rest gewoon. getBoxes = dezelfde zichtbaar-map
 	// als de editor (minibar.js rekent zelf naar mm). avoid: op een smal scherm ligt het paneel over het canvas.
@@ -167,7 +167,7 @@ function start() {
 		app.select([ids[j]]);
 		ui.revealSel([ids[j]]);   // ingezoomd: de gekozen (toetsenbordfocus) in beeld
 	});
-	// Serial herverbindt stil; BLE wacht op een expliciete knopklik voor de apparaatkeuze.
+	// Bekende printers herstellen stil; alleen een nieuwe apparaatkeuze vraagt een knopklik.
 	printer.initPrinter({ onStatus: ui.status, onLog: ui.log, onConnection: ui.connection });
 	app.on('change', () => schedule(true));
 	app.on('doc', () => schedule(true));
