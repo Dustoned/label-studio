@@ -97,7 +97,7 @@ async function print(onlyRow = false) {
 			const r = render.renderDoc(cv, d, ctxOf(i), { scale: 1, placeholders: false });
 			return { rgba: cv.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, r.W, r.H).data, W: r.W, H: r.H };
 		};
-		n = await printer.printLabels(total, renderNth, printer.printSettings(d), (k, t) => ui.printing(k, t)) || 0;
+		n = await printer.printLabels(total, renderNth, d.print, (k, t) => ui.printing(k, t)) || 0;
 	}
 	catch (e) { console.error(e); ui.toast('Printen mislukt: ' + (e?.message || e), 'err'); }
 	finally { printBusy = false; ui.printing(null); }
